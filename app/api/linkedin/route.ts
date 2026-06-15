@@ -6,7 +6,9 @@ export const maxDuration = 60;
 
 const DEFAULT_KEYWORD = process.env.NEXT_PUBLIC_DEFAULT_KEYWORD || "Next.js";
 const ACTOR_ID = "datadoping~linkedin-posts-search-scraper";
-const LIMIT = 10;
+// Posts to request per keyword. Free tier caps at 50; on a paid Apify plan
+// raise APIFY_MAX_POSTS to pull more candidates for the AND-term filter.
+const MAX_POSTS = Number(process.env.APIFY_MAX_POSTS) || 50;
 
 interface RawReaction {
   count?: number;
@@ -14,7 +16,7 @@ interface RawReaction {
 }
 
 interface RawPost {
-  author?: { name?: string };
+  author?: { name?: string; image_url?: string };
   text?: string;
   postText?: string;
   content?: string;
@@ -46,6 +48,23 @@ function dateFilterFromRange(from: string, to: string): string | null {
   return null; // wider than a month — let the actor return anything
 }
 
+/**
+ * Split a multi-word search into individual terms (hashtags' "#" stripped),
+ * so "polaris fellowship internship" requires ALL three to appear in a post.
+ */
+function searchTerms(keyword: string): string[] {
+  return keyword
+    .split(/\s+/)
+    .map((w) => w.trim().replace(/^#/, "").toLowerCase())
+    .filter(Boolean);
+}
+
+/** True if every search term appears (case-insensitive, hashtag-or-not) in the post text. */
+function matchesAllTerms(text: string, terms: string[]): boolean {
+  const haystack = text.toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
 /** Pull a likes count out of a raw post, trying every known shape. Null if absent. */
 function likesFrom(p: RawPost): number | null {
   if (typeof p.total_reactions === "number") return p.total_reactions;
@@ -69,6 +88,7 @@ function likesFrom(p: RawPost): number | null {
 
 function normalizePost(p: RawPost): Post {
   const author = p.author?.name ?? "Unknown";
+  const avatar = p.author?.image_url || undefined;
   const text = p.text ?? p.postText ?? p.content ?? "";
   const url = p.post_url ?? p.postUrl ?? p.url ?? "#";
 
@@ -85,6 +105,7 @@ function normalizePost(p: RawPost): Post {
   return {
     platform: "linkedin",
     author,
+    avatar,
     text,
     url,
     date,
@@ -110,7 +131,7 @@ export async function GET(request: Request) {
 
   const input: Record<string, unknown> = {
     keywords: [keyword],
-    max_posts: LIMIT,
+    max_posts: MAX_POSTS,
     sort_by: sort === "recent" ? "date_posted" : "relevance",
   };
   const dateFilter = dateFilterFromRange(from, to);
@@ -149,7 +170,15 @@ export async function GET(request: Request) {
     }
 
     const rawPosts: RawPost[] = Array.isArray(data) ? (data as RawPost[]) : [];
-    const posts = rawPosts.slice(0, LIMIT).map(normalizePost);
+
+    // Multi-word search: only keep posts whose text contains every term.
+    const terms = searchTerms(keyword);
+    const filtered =
+      terms.length > 1
+        ? rawPosts.filter((p) => matchesAllTerms(p.text ?? p.postText ?? p.content ?? "", terms))
+        : rawPosts;
+
+    const posts = filtered.map(normalizePost);
 
     return NextResponse.json({ platform: "linkedin", keyword, posts });
   } catch (err) {

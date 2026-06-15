@@ -4,8 +4,12 @@ import {
   LinkedInIcon,
   XIcon,
   HeartIcon,
+  EyeIcon,
   ArrowUpRightIcon,
 } from "./icons";
+
+// Rough rule of thumb: impressions ≈ 80x the like count.
+export const IMPRESSIONS_PER_LIKE = 80;
 
 const PLATFORM_META = {
   linkedin: {
@@ -61,9 +65,18 @@ export default function PostCard({
     "--platform-soft": meta.soft,
   } as CSSProperties;
 
+  const impressions = post.likes * IMPRESSIONS_PER_LIKE;
+
   return (
     <article className="card" style={style}>
       <div className="card-head">
+        {post.avatar ? (
+          <img className="avatar" src={post.avatar} alt="" />
+        ) : (
+          <span className="avatar avatar-fallback" aria-hidden="true">
+            {post.author.charAt(0).toUpperCase()}
+          </span>
+        )}
         <span className="badge">
           <Icon />
           {meta.label}
@@ -80,6 +93,10 @@ export default function PostCard({
         <span className="likes">
           <HeartIcon />
           {post.likes.toLocaleString()}
+        </span>
+        <span className="impressions" title="Estimated impressions (likes × 80)">
+          <EyeIcon />
+          {impressions.toLocaleString()}
         </span>
         <span
           className="bar"

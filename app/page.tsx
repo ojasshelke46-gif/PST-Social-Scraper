@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import PostCard from "./PostCard";
-import { SearchIcon } from "./icons";
+import PostCard, { IMPRESSIONS_PER_LIKE } from "./PostCard";
+import { SearchIcon, HeartIcon, EyeIcon } from "./icons";
 import type { Post, PlatformFilter, SortKey } from "./types";
-
-const DEFAULT_KEYWORD = process.env.NEXT_PUBLIC_DEFAULT_KEYWORD || "Next.js";
+import { useAuth } from "./AuthProvider";
 
 const PLATFORM_TABS: { key: PlatformFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -28,9 +27,128 @@ function toDateInput(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+// ─── Sign-in screen ──────────────────────────────────────────────────────────
+
+function SignInScreen() {
+  const { signInWithGoogle } = useAuth();
+  return (
+    <div className="auth-gate">
+      <div className="auth-card">
+        <p className="eyebrow">Social Signal Tracker</p>
+        <h1 className="auth-title">Signal, not noise.</h1>
+        <p className="auth-sub">
+          Sign in with Google to start scraping LinkedIn &amp; X posts.
+        </p>
+        <button id="google-sign-in-btn" className="google-btn" onClick={signInWithGoogle}>
+          <GoogleIcon />
+          Sign in with Google
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── User header ─────────────────────────────────────────────────────────────
+
+function UserHeader() {
+  const { user, signOut } = useAuth();
+  if (!user) return null;
+  return (
+    <div className="user-header">
+      {user.photoURL && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={user.photoURL}
+          alt={user.displayName ?? "User avatar"}
+          className="user-avatar"
+          referrerPolicy="no-referrer"
+        />
+      )}
+      <span className="user-name">{user.displayName ?? user.email}</span>
+      <button id="sign-out-btn" className="sign-out-btn" onClick={signOut}>
+        Sign out
+      </button>
+    </div>
+  );
+}
+
+// ─── Google icon SVG ─────────────────────────────────────────────────────────
+
+function GoogleIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
+    </svg>
+  );
+}
+
+// ─── Fire-and-forget search logger ───────────────────────────────────────────
+
+async function logSearch(payload: {
+  name: string;
+  email: string;
+  keyword: string;
+  timestamp: string;
+}) {
+  try {
+    await fetch("/api/log-search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error("[log-search] failed:", err);
+  }
+}
+
+// ─── Main page ───────────────────────────────────────────────────────────────
+
 export default function Home() {
-  const [keyword, setKeyword] = useState(DEFAULT_KEYWORD);
-  const [inputValue, setInputValue] = useState(DEFAULT_KEYWORD);
+  const { user, loading } = useAuth();
+
+  // Show nothing while Firebase resolves auth state
+  if (loading) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-card">
+          <p className="eyebrow">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not signed in → show sign-in screen
+  if (!user) return <SignInScreen />;
+
+  // Signed in → show scraper
+  return <ScraperUI user={user} />;
+}
+
+// ─── Scraper UI (extracted so it only renders when signed in) ─────────────────
+
+import type { User } from "firebase/auth";
+
+function ScraperUI({ user }: { user: User }) {
+  const [keyword, setKeyword] = useState("");
+  const [inputValue, setInputValue] = useState("");
+  // Extra search terms — combined with inputValue, all must appear in a post (AND).
+  const [extraTerms, setExtraTerms] = useState<{ id: number; value: string }[]>([]);
+  const nextTermId = useRef(0);
   const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [sort, setSort] = useState<SortKey>("likes");
 
@@ -48,7 +166,8 @@ export default function Home() {
   const reqId = useRef(0);
 
   const load = useCallback(async (kw: string, from?: string, to?: string) => {
-    const term = kw.trim() || DEFAULT_KEYWORD;
+    const term = kw.trim();
+    if (!term) return;
     const id = ++reqId.current;
     setLoading(true);
     setHasSearched(true);
@@ -76,45 +195,57 @@ export default function Home() {
   const handleSearch = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      const term = inputValue.trim() || DEFAULT_KEYWORD;
+      const term = [inputValue, ...extraTerms.map((t) => t.value)]
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .join(" ");
+      if (!term) return;
       setKeyword(term);
       load(term, dateFrom, dateTo);
+
+      // Fire-and-forget: log the search with user identity
+      logSearch({
+        name: user.displayName ?? "",
+        email: user.email ?? "",
+        keyword: term,
+        timestamp: new Date().toISOString(),
+      });
     },
-    [inputValue, dateFrom, dateTo, load]
+    [inputValue, extraTerms, dateFrom, dateTo, load, user]
   );
 
-  const applyQuickRange = useCallback(
-    (days: number) => {
-      const to = new Date();
-      const from = new Date();
-      from.setDate(from.getDate() - days);
-      const fromStr = toDateInput(from);
-      const toStr = toDateInput(to);
-      setDateFrom(fromStr);
-      setDateTo(toStr);
-      setRangeOpen(false);
-      const term = inputValue.trim() || DEFAULT_KEYWORD;
-      setKeyword(term);
-      load(term, fromStr, toStr);
-    },
-    [inputValue, load]
-  );
+  const addTerm = useCallback(() => {
+    setExtraTerms((prev) => [...prev, { id: nextTermId.current++, value: "" }]);
+  }, []);
+
+  const updateTerm = useCallback((id: number, value: string) => {
+    setExtraTerms((prev) => prev.map((t) => (t.id === id ? { ...t, value } : t)));
+  }, []);
+
+  const removeTerm = useCallback((id: number) => {
+    setExtraTerms((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Date-range controls only update local state — they don't trigger a
+  // search. Only the Search button kicks off a fetch.
+  const applyQuickRange = useCallback((days: number) => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    setDateFrom(toDateInput(from));
+    setDateTo(toDateInput(to));
+    setRangeOpen(false);
+  }, []);
 
   const applyCustomRange = useCallback(() => {
     setRangeOpen(false);
-    const term = inputValue.trim() || DEFAULT_KEYWORD;
-    setKeyword(term);
-    load(term, dateFrom, dateTo);
-  }, [inputValue, dateFrom, dateTo, load]);
+  }, []);
 
   const clearRange = useCallback(() => {
     setDateFrom("");
     setDateTo("");
     setRangeOpen(false);
-    const term = inputValue.trim() || DEFAULT_KEYWORD;
-    setKeyword(term);
-    load(term);
-  }, [inputValue, load]);
+  }, []);
 
   const visible = useMemo(() => {
     return posts
@@ -131,29 +262,69 @@ export default function Home() {
     [visible]
   );
 
+  const totalLikes = useMemo(
+    () => visible.reduce((sum, p) => sum + p.likes, 0),
+    [visible]
+  );
+
+  const totalImpressions = totalLikes * IMPRESSIONS_PER_LIKE;
+
   const errorEntries = Object.entries(platformErrors);
 
   return (
     <main className="page">
+      <UserHeader />
+
       <header className="header">
         <p className="eyebrow">Social Signal Tracker</p>
         <h1 className="title">Signal, not noise.</h1>
         <p className="subtitle">
-          LinkedIn &amp; X posts matching <span className="kw">{keyword || DEFAULT_KEYWORD}</span>,
-          in one feed.
+          {keyword ? (
+            <>
+              LinkedIn &amp; X posts matching <span className="kw">{keyword}</span>, in one feed.
+            </>
+          ) : (
+            "LinkedIn & X posts, in one feed."
+          )}
         </p>
       </header>
 
       <form className="toolbar" onSubmit={handleSearch}>
-        <div className="search">
-          <SearchIcon />
-          <input
-            type="text"
-            placeholder="Search a keyword across LinkedIn & X…"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            aria-label="Search keyword"
-          />
+        <div className="search-group">
+          <div className="search">
+            <SearchIcon />
+            <input
+              type="text"
+              placeholder="Search a keyword across LinkedIn & X…"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              aria-label="Search keyword"
+            />
+          </div>
+
+          {extraTerms.map((t) => (
+            <div className="search extra-term" key={t.id}>
+              <input
+                type="text"
+                placeholder="Another keyword (AND)…"
+                value={t.value}
+                onChange={(e) => updateTerm(t.id, e.target.value)}
+                aria-label="Additional search keyword"
+              />
+              <button
+                type="button"
+                className="remove-term"
+                onClick={() => removeTerm(t.id)}
+                aria-label="Remove keyword"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+
+          <button type="button" className="add-term" onClick={addTerm}>
+            + Add keyword
+          </button>
         </div>
 
         <button type="submit" className="search-btn">
@@ -252,16 +423,34 @@ export default function Home() {
         </div>
       )}
 
+      {hasSearched && !loading && visible.length > 0 && (
+        <div className="stats-hero">
+          <div className="stat-card">
+            <span className="stat-label">
+              <HeartIcon /> Total Likes
+            </span>
+            <span className="stat-value">{totalLikes.toLocaleString()}</span>
+          </div>
+          <div className="stat-card stat-card-accent">
+            <span className="stat-label">
+              <EyeIcon /> Total Impressions
+            </span>
+            <span className="stat-value">{totalImpressions.toLocaleString()}</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-label">
+              <SearchIcon /> Posts Found
+            </span>
+            <span className="stat-value">{visible.length}</span>
+          </div>
+        </div>
+      )}
+
       {hasSearched && (
         <div className="meta-row">
           <span>
             {loading ? "Fetching…" : `Sorted by ${sort === "likes" ? "engagement" : "date"}`}
           </span>
-          {!loading && (
-            <span className="count">
-              {visible.length} {visible.length === 1 ? "post" : "posts"}
-            </span>
-          )}
         </div>
       )}
 
@@ -285,7 +474,7 @@ export default function Home() {
         </div>
       ) : visible.length === 0 ? (
         <div className="empty">
-          No posts found for <span className="kw">{keyword || DEFAULT_KEYWORD}</span>.
+          No posts found for <span className="kw">{keyword}</span>.
         </div>
       ) : (
         <div className="feed">
@@ -293,7 +482,7 @@ export default function Home() {
             <PostCard
               key={post.url}
               post={post}
-              keyword={keyword || DEFAULT_KEYWORD}
+              keyword={keyword}
               maxLikes={maxLikes}
             />
           ))}

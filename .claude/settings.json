@@ -36,7 +36,9 @@
       "Bash(git remote *)",
       "Bash(git init *)",
       "Bash(head -n -2 blf7hhgnv.txt)",
-      "Bash(sed -n '1,924p' blf7hhgnv.txt)"
+      "Bash(sed -n '1,924p' blf7hhgnv.txt)",
+      "Bash(curl -s \"http://localhost:3000/api/twitter?keyword=Polaris%20School%20of%20Technology&sort=recent\" -o /tmp/tw_route.json -w \"STATUS:%{http_code}\\\\n\" --max-time 40)",
+      "Bash(grep -rEn \"AIza|apify_api|new1_|private_key.{0,5}-----BEGIN|sk-|ask_\" app/AuthProvider.tsx lib/firebase.ts lib/firebase-admin.ts app/api/log-search/ app/layout.tsx)"
     ],
     "additionalDirectories": [
       "/private/tmp"

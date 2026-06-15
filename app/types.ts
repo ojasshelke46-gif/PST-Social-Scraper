@@ -3,6 +3,7 @@ export type Platform = "linkedin" | "twitter";
 export interface Post {
   platform: Platform;
   author: string;
+  avatar?: string;
   text: string;
   likes: number;
   url: string;
