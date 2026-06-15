@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(curl -s \"http://localhost:3000/api/linkedin?keyword=AI\")",
+      "Bash(lsof -ti:3000)",
+      "Bash(curl -s \"http://localhost:3001/api/linkedin?keyword=AI\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" \"http://localhost:3001/\")",
+      "Bash(curl -s \"http://localhost:3001/\" -o /dev/null -w \"reload:%{http_code}\\\\n\")",
+      "Bash(curl -s \"http://localhost:3001/api/linkedin?keyword=AI\" -o /dev/null)",
+      "Bash(curl -s \"http://localhost:3001/api/twitter?keyword=AI\" -o /dev/null)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)\\); print\\({k:v for k,v in d.items\\(\\) if k!='html'}\\)\")",
+      "Bash(curl -s -m 200 \"http://localhost:3001/api/linkedin?keyword=AI\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -m 60 \"http://localhost:3001/api/debug\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -m 90 \"http://localhost:3001/api/debug\")",
+      "Bash(echo \"TSC DONE exit=$?\")",
+      "Bash(curl -s -m 120 \"http://localhost:3001/api/linkedin?keyword=AI\")",
+      "Bash(npm uninstall *)",
+      "Bash(echo \"TSC exit=$?\")",
+      "Bash(curl -s -m 150 \"http://localhost:3001/api/linkedin?keyword=AI\")",
+      "Bash(lsof -ti:3000,3001)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(python3 -c ' *)",
+      "Bash(rm -f /tmp/job.json /tmp/scrape.json /tmp/bp_req.json /tmp/bp_resp.json)",
+      "Skill(gsd-debug)",
+      "Skill(gsd-debug:*)",
+      "Bash(curl -s \"http://localhost:3000/api/posts?keyword=Polaris%20School%20of%20Technology\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('errors:', d.get\\('errors'\\)\\); print\\('count:', len\\(d.get\\('posts',[]\\)\\)\\); [print\\('-', p['platform'], p['date'][:10], p['author'][:30]\\) for p in d.get\\('posts',[]\\)[:12]]\")",
+      "WebFetch(domain:api.market)",
+      "WebFetch(domain:docs.api.market)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000)",
+      "Bash(git remote *)",
+      "Bash(git init *)",
+      "Bash(head -n -2 blf7hhgnv.txt)",
+      "Bash(sed -n '1,924p' blf7hhgnv.txt)"
+    ],
+    "additionalDirectories": [
+      "/private/tmp"
+    ]
+  }
+}

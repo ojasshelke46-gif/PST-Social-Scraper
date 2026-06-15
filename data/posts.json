@@ -1,0 +1,82 @@
+[
+  {
+    "platform": "linkedin",
+    "author": "Maya Chen",
+    "text": "After 6 months building with Next.js, here's what nobody tells you about the App Router: caching is the feature AND the footgun. We cut our build times in half once we understood it.",
+    "likes": 4820,
+    "url": "https://www.linkedin.com/posts/example-maya-chen",
+    "date": "2026-06-12T09:30:00Z"
+  },
+  {
+    "platform": "twitter",
+    "author": "@devjordan",
+    "text": "hot take: most teams don't need a state management library. Next.js + URL params + server components covers 90% of cases. fight me",
+    "likes": 9120,
+    "url": "https://x.com/devjordan/status/example1",
+    "date": "2026-06-13T14:05:00Z"
+  },
+  {
+    "platform": "linkedin",
+    "author": "Priya Nair",
+    "text": "We migrated our dashboard to Next.js and shipped a unified analytics feed in two weeks. Server components made the data layer almost boring. Boring is good.",
+    "likes": 2310,
+    "url": "https://www.linkedin.com/posts/example-priya-nair",
+    "date": "2026-06-10T17:45:00Z"
+  },
+  {
+    "platform": "twitter",
+    "author": "@frontendfran",
+    "text": "spent all day debugging hydration errors. turns out it was a Date() rendered on the server vs client. Next.js you owe me a coffee ☕",
+    "likes": 6750,
+    "url": "https://x.com/frontendfran/status/example2",
+    "date": "2026-06-14T08:12:00Z"
+  },
+  {
+    "platform": "linkedin",
+    "author": "Tomás Rivera",
+    "text": "Reminder: a fast dashboard is a product feature, not an engineering vanity metric. Our Next.js rebuild dropped p95 load to under 400ms and support tickets fell with it.",
+    "likes": 1540,
+    "url": "https://www.linkedin.com/posts/example-tomas-rivera",
+    "date": "2026-06-08T11:20:00Z"
+  },
+  {
+    "platform": "twitter",
+    "author": "@sara_builds",
+    "text": "shipped a side project this weekend with Next.js and Tailwind. 0 to deployed in 4 hours. the DX is genuinely unreal right now",
+    "likes": 3890,
+    "url": "https://x.com/sara_builds/status/example3",
+    "date": "2026-06-11T20:30:00Z"
+  },
+  {
+    "platform": "linkedin",
+    "author": "Wei Zhang",
+    "text": "Interviewing frontend engineers in 2026: I no longer ask about frameworks. I ask how they'd structure a Next.js project for a team of 20. The answers tell me everything.",
+    "likes": 5210,
+    "url": "https://www.linkedin.com/posts/example-wei-zhang",
+    "date": "2026-06-09T13:00:00Z"
+  },
+  {
+    "platform": "twitter",
+    "author": "@perfnerd",
+    "text": "benchmarked 5 meta-frameworks this week. Next.js wins on ecosystem, loses on cold starts. pick your tradeoff carefully and stop chasing benchmarks",
+    "likes": 2470,
+    "url": "https://x.com/perfnerd/status/example4",
+    "date": "2026-06-07T16:40:00Z"
+  },
+  {
+    "platform": "linkedin",
+    "author": "Aisha Bello",
+    "text": "Mentorship moment: a junior asked why we use Next.js over plain React. My answer: because routing, data fetching, and rendering decisions should be conventions, not debates.",
+    "likes": 3320,
+    "url": "https://www.linkedin.com/posts/example-aisha-bello",
+    "date": "2026-06-13T07:15:00Z"
+  },
+  {
+    "platform": "twitter",
+    "author": "@codingcarlos",
+    "text": "unpopular: server actions in Next.js are great until you need 3 of them on one form. then you miss your old API routes. mixed feelings honestly",
+    "likes": 1180,
+    "url": "https://x.com/codingcarlos/status/example5",
+    "date": "2026-06-06T10:50:00Z"
+  }
+]
