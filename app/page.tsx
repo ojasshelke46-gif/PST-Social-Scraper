@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { User } from "firebase/auth";
 import PostCard, { IMPRESSIONS_PER_LIKE } from "./PostCard";
 import { SearchIcon, HeartIcon, EyeIcon } from "./icons";
 import type { Post, PlatformFilter, SortKey } from "./types";
@@ -140,8 +141,6 @@ export default function Home() {
 }
 
 // ─── Scraper UI (extracted so it only renders when signed in) ─────────────────
-
-import type { User } from "firebase/auth";
 
 function ScraperUI({ user }: { user: User }) {
   const [keyword, setKeyword] = useState("");
