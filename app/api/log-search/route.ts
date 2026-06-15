@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "../../../lib/firebase-admin";
+import { getAdminDb } from "../../../lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 
 interface LogSearchBody {
@@ -14,7 +14,10 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as LogSearchBody;
     const { name, email, keyword, timestamp } = body;
 
-    await adminDb.collection("search_logs").add({
+    // getAdminDb() is called here — inside the handler — never at module load time.
+    const db = getAdminDb();
+
+    await db.collection("search_logs").add({
       name,
       email,
       keyword,
