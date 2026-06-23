@@ -6,6 +6,7 @@ import PostCard, { IMPRESSIONS_PER_LIKE } from "./PostCard";
 import { SearchIcon, HeartIcon, EyeIcon } from "./icons";
 import type { Post, PlatformFilter, SortKey } from "./types";
 import { useAuth } from "./AuthProvider";
+import { exportToCSV, exportToPDF } from "./lib/export";
 
 const PLATFORM_TABS: { key: PlatformFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -26,6 +27,30 @@ interface PostsResponse {
 
 function toDateInput(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function CsvIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="8" y1="13" x2="16" y2="13" />
+      <line x1="8" y1="17" x2="16" y2="17" />
+      <line x1="8" y1="9" x2="10" y2="9" />
+    </svg>
+  );
+}
+
+function PdfIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <path d="M9 13h1a2 2 0 0 1 0 4H9v-4z" />
+      <path d="M15 13h2" />
+      <path d="M15 17h2" />
+    </svg>
+  );
 }
 
 // ─── Sign-in screen ──────────────────────────────────────────────────────────
@@ -160,6 +185,8 @@ function ScraperUI({ user }: { user: User }) {
   const [hasSearched, setHasSearched] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [platformErrors, setPlatformErrors] = useState<Record<string, string>>({});
+  const [csvExporting, setCsvExporting] = useState(false);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
   // Track the in-flight request so stale responses don't overwrite fresh ones.
   const reqId = useRef(0);
@@ -269,6 +296,21 @@ function ScraperUI({ user }: { user: User }) {
   const totalImpressions = totalLikes * IMPRESSIONS_PER_LIKE;
 
   const errorEntries = Object.entries(platformErrors);
+
+  const handleExportCSV = useCallback(() => {
+    setCsvExporting(true);
+    exportToCSV(visible);
+    setCsvExporting(false);
+  }, [visible]);
+
+  const handleExportPDF = useCallback(async () => {
+    setPdfExporting(true);
+    try {
+      await exportToPDF(visible);
+    } finally {
+      setPdfExporting(false);
+    }
+  }, [visible]);
 
   return (
     <main className="page">
@@ -409,6 +451,27 @@ function ScraperUI({ user }: { user: User }) {
               {t.label}
             </button>
           ))}
+        </div>
+
+        <div className="export-btns">
+          <button
+            type="button"
+            className="export-btn"
+            disabled={visible.length === 0 || loading || csvExporting}
+            onClick={handleExportCSV}
+          >
+            <CsvIcon />
+            {csvExporting ? "Exporting…" : "Export CSV"}
+          </button>
+          <button
+            type="button"
+            className="export-btn"
+            disabled={visible.length === 0 || loading || pdfExporting}
+            onClick={handleExportPDF}
+          >
+            <PdfIcon />
+            {pdfExporting ? "Exporting…" : "Export PDF"}
+          </button>
         </div>
       </form>
 
