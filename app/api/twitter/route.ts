@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import type { Post } from "@/app/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const DEFAULT_KEYWORD = process.env.NEXT_PUBLIC_DEFAULT_KEYWORD || "Next.js";
 const ENDPOINT = "https://api.twitterapi.io/twitter/tweet/advanced_search";
-// Endpoint returns ~20 tweets per page; cap how many we keep per search.
-const MAX_TWEETS = 10;
+// Max tweets to pull per search. Set high so we page through EVERY tweet in the
+// window (exact count, not truncated). Billed per tweet returned. Override with
+// TWITTERAPI_MAX_TWEETS. The date range bounds how many actually exist.
+const MAX_TWEETS = Number(process.env.TWITTERAPI_MAX_TWEETS) || 2000;
+// Safety cap on page requests so a runaway never loops forever (~20 tweets/page).
+const MAX_PAGES = 200;
+// Overall time budget, kept under maxDuration.
+const BUDGET_MS = 110_000;
 
 interface RawTweetAuthor {
   name?: string;
@@ -25,7 +31,7 @@ interface RawTweet {
 
 interface RawSearchResponse {
   tweets?: RawTweet[];
-  has_more?: boolean;
+  has_next_page?: boolean;
   next_cursor?: string;
 }
 
@@ -45,6 +51,9 @@ export async function GET(request: Request) {
   const keyword = params.get("keyword")?.trim() || DEFAULT_KEYWORD;
   const sort = params.get("sort") || "top";
   const from = params.get("from")?.trim() || "";
+  const to = params.get("to")?.trim() || "";
+  // Extra required terms (one per added keyword box). Only AND-filter when present.
+  const andTerms = params.getAll("and").map((t) => t.trim()).filter(Boolean);
 
   const apiKey = process.env.TWITTERAPI_IO_KEY;
   if (!apiKey) {
@@ -56,49 +65,81 @@ export async function GET(request: Request) {
 
   const queryType = sort === "recent" ? "Latest" : "Top";
 
+  // Bound the search to the date window with since_time / until_time (unix secs).
   let query = `"${keyword}"`;
   const fromMs = from ? new Date(from).getTime() : NaN;
-  if (!Number.isNaN(fromMs)) {
-    query += ` since_time:${Math.floor(fromMs / 1000)}`;
-  }
+  if (!Number.isNaN(fromMs)) query += ` since_time:${Math.floor(fromMs / 1000)}`;
+  const toMs = to ? new Date(to).getTime() + 24 * 60 * 60 * 1000 : NaN; // inclusive end-of-day
+  if (!Number.isNaN(toMs)) query += ` until_time:${Math.floor(toMs / 1000)}`;
 
-  const url = `${ENDPOINT}?${new URLSearchParams({ query, queryType })}`;
+  const deadline = Date.now() + BUDGET_MS;
 
   try {
-    const res = await fetch(url, {
-      headers: { "X-API-Key": apiKey },
-      cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
-    });
+    const all: RawTweet[] = [];
+    let cursor = "";
+    let pages = 0;
+    let loggedFirst = false;
 
-    const bodyText = await res.text();
+    while (pages < MAX_PAGES && all.length < MAX_TWEETS && Date.now() < deadline) {
+      const qs = new URLSearchParams({ query, queryType });
+      if (cursor) qs.set("cursor", cursor);
 
-    if (!res.ok) {
-      console.error(`[twitterapi.io] search failed (${res.status}): ${bodyText.slice(0, 1000)}`);
-      const error =
-        res.status === 401
-          ? "TWITTERAPI_IO_KEY is missing or invalid"
-          : `TwitterAPI.io search failed (${res.status})`;
-      return NextResponse.json({ platform: "twitter", keyword, posts: [], error }, { status: 502 });
+      const res = await fetch(`${ENDPOINT}?${qs}`, {
+        headers: { "X-API-Key": apiKey },
+        cache: "no-store",
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      const bodyText = await res.text();
+
+      if (!res.ok) {
+        console.error(`[twitterapi.io] search failed (${res.status}): ${bodyText.slice(0, 1000)}`);
+        // If we already gathered some tweets, return those instead of failing.
+        if (all.length > 0) break;
+        const error =
+          res.status === 401
+            ? "TWITTERAPI_IO_KEY is missing or invalid"
+            : `TwitterAPI.io search failed (${res.status})`;
+        return NextResponse.json({ platform: "twitter", keyword, posts: [], error }, { status: 502 });
+      }
+
+      let data: RawSearchResponse;
+      try {
+        data = JSON.parse(bodyText) as RawSearchResponse;
+      } catch {
+        console.error(`[twitterapi.io] non-JSON page: ${bodyText.slice(0, 500)}`);
+        if (all.length > 0) break;
+        return NextResponse.json(
+          { platform: "twitter", keyword, posts: [], error: "TwitterAPI.io returned non-JSON response" },
+          { status: 502 },
+        );
+      }
+
+      const tweets = data.tweets ?? [];
+      if (!loggedFirst && tweets[0]) {
+        console.log(`[twitterapi.io] first tweet: ${JSON.stringify(tweets[0], null, 2)}`);
+        loggedFirst = true;
+      }
+      all.push(...tweets);
+      pages += 1;
+
+      // Stop when the API says there's no next page or returns an empty page.
+      if (!data.has_next_page || !data.next_cursor || tweets.length === 0) break;
+      cursor = data.next_cursor;
     }
 
-    let data: RawSearchResponse;
-    try {
-      data = JSON.parse(bodyText) as RawSearchResponse;
-    } catch {
-      console.error(`[twitterapi.io] search returned non-JSON: ${bodyText.slice(0, 1000)}`);
-      return NextResponse.json(
-        { platform: "twitter", keyword, posts: [], error: "TwitterAPI.io returned non-JSON response" },
-        { status: 502 },
-      );
-    }
+    console.log(`[twitterapi.io] pulled ${all.length} tweets across ${pages} page(s)`);
 
-    const tweets = data.tweets ?? [];
-    if (tweets[0]) {
-      console.log(`[twitterapi.io] first tweet: ${JSON.stringify(tweets[0], null, 2)}`);
-    }
+    // Only keep tweets containing every explicitly-added keyword (AND).
+    const filtered =
+      andTerms.length > 0
+        ? all.filter((t) => {
+            const text = (t.text ?? "").toLowerCase();
+            return andTerms.every((term) => text.includes(term.replace(/^#/, "").toLowerCase()));
+          })
+        : all;
 
-    const posts = tweets.slice(0, MAX_TWEETS).map(normalizeTweet);
+    const posts = filtered.slice(0, MAX_TWEETS).map(normalizeTweet);
 
     return NextResponse.json({ platform: "twitter", keyword, posts });
   } catch (err) {

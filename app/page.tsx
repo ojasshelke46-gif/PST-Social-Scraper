@@ -19,12 +19,6 @@ const SORT_TABS: { key: SortKey; label: string }[] = [
   { key: "date", label: "Recent" },
 ];
 
-interface PostsResponse {
-  keyword: string;
-  posts: Post[];
-  errors?: Record<string, string>;
-}
-
 function toDateInput(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -176,12 +170,20 @@ function ScraperUI({ user }: { user: User }) {
   const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [sort, setSort] = useState<SortKey>("likes");
 
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // Default the range to the last 7 days; a search with no manual change
+  // scrapes the past week. Changing the dates overrides this.
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return toDateInput(d);
+  });
+  const [dateTo, setDateTo] = useState(() => toDateInput(new Date()));
   const [rangeOpen, setRangeOpen] = useState(false);
 
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
+  // Platforms whose fetch is still in flight (for progressive rendering).
+  const [pending, setPending] = useState<string[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [platformErrors, setPlatformErrors] = useState<Record<string, string>>({});
@@ -191,43 +193,119 @@ function ScraperUI({ user }: { user: User }) {
   // Track the in-flight request so stale responses don't overwrite fresh ones.
   const reqId = useRef(0);
 
-  const load = useCallback(async (kw: string, from?: string, to?: string) => {
+  const load = useCallback(
+    async (kw: string, from?: string, to?: string, andTerms: string[] = []) => {
     const term = kw.trim();
     if (!term) return;
     const id = ++reqId.current;
     setLoading(true);
+    setPending(["twitter", "linkedin"]);
     setHasSearched(true);
     setFetchError(null);
-    try {
-      const qs = new URLSearchParams({ keyword: term });
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
-      const res = await fetch(`/api/posts?${qs.toString()}`, {
-        cache: "no-store",
-      });
-      const data = (await res.json()) as PostsResponse;
-      if (id !== reqId.current) return; // a newer request superseded this one
-      setPosts(data.posts ?? []);
-      setPlatformErrors(data.errors ?? {});
-    } catch (err) {
-      if (id !== reqId.current) return;
-      setFetchError(err instanceof Error ? err.message : "Failed to load posts");
-      setPosts([]);
-    } finally {
-      if (id === reqId.current) setLoading(false);
-    }
+    setPosts([]);
+    setPlatformErrors({});
+
+    const qs = new URLSearchParams({ keyword: term });
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    // Each added keyword box becomes a required AND term. A single box sends none,
+    // so a plain phrase search is trusted as-is (no over-strict word filtering).
+    for (const t of andTerms) qs.append("and", t);
+
+    const stale = () => id !== reqId.current;
+    const donePlatform = (platform: string) => {
+      if (!stale()) setPending((prev) => prev.filter((p) => p !== platform));
+    };
+    const mergePosts = (platform: string, list: Post[]) =>
+      setPosts((prev) => [...prev.filter((p) => p.platform !== platform), ...list]);
+    const setErr = (platform: string, msg: string) =>
+      setPlatformErrors((prev) => ({ ...prev, [platform]: msg }));
+
+    // X/Twitter is fast — one request.
+    const fetchTwitter = async () => {
+      try {
+        const res = await fetch(`/api/twitter?${qs}`, { cache: "no-store" });
+        const data = (await res.json()) as { posts?: Post[]; error?: string };
+        if (stale()) return;
+        if (data.posts?.length) mergePosts("twitter", data.posts);
+        if (data.error) setErr("twitter", data.error);
+      } catch (err) {
+        if (!stale()) setErr("twitter", err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        donePlatform("twitter");
+      }
+    };
+
+    // One LinkedIn run: start the Apify actor, poll until done. Returns "failed"
+    // when the actor emits a PROCESSING_ERROR (LinkedIn blocked the scrape).
+    const runLinkedInOnce = async (): Promise<"ok" | "failed" | "stop"> => {
+      const sres = await fetch(`/api/linkedin/start?${qs}`, { cache: "no-store" });
+      const s = (await sres.json()) as { runId?: string; datasetId?: string; error?: string };
+      if (stale()) return "stop";
+      if (s.error || !s.runId || !s.datasetId) {
+        setErr("linkedin", s.error || "Failed to start LinkedIn scrape");
+        return "failed";
+      }
+
+      const pollDeadline = Date.now() + 290_000;
+      const statusQs = `${qs}&runId=${s.runId}&datasetId=${s.datasetId}`;
+      while (Date.now() < pollDeadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        if (stale()) return "stop";
+        const pres = await fetch(`/api/linkedin/status?${statusQs}`, { cache: "no-store" });
+        const p = (await pres.json()) as {
+          done?: boolean;
+          failed?: boolean;
+          posts?: Post[];
+          error?: string;
+        };
+        if (stale()) return "stop";
+        if (p.posts?.length) mergePosts("linkedin", p.posts);
+        if (p.failed) return "failed";
+        if (p.done) return "ok";
+      }
+      return "ok";
+    };
+
+    // LinkedIn is slow AND flaky — the actor sometimes returns PROCESSING_ERROR.
+    // Auto-retry up to 2 times before giving up, so a transient block self-heals.
+    const fetchLinkedIn = async () => {
+      try {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const result = await runLinkedInOnce();
+          if (result === "stop") return;
+          if (result === "ok") return;
+          if (stale()) return;
+          if (attempt < 3) {
+            setErr("linkedin", `LinkedIn scrape failed — retrying (${attempt}/2)…`);
+            await new Promise((r) => setTimeout(r, 1500));
+          } else {
+            setErr("linkedin", "LinkedIn scrape failed after retries. Try again in a moment.");
+          }
+        }
+      } catch (err) {
+        if (!stale()) setErr("linkedin", err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        donePlatform("linkedin");
+      }
+    };
+
+    await Promise.allSettled([fetchTwitter(), fetchLinkedIn()]);
+    if (!stale()) setLoading(false);
   }, []);
 
   const handleSearch = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      const term = [inputValue, ...extraTerms.map((t) => t.value)]
+      const boxes = [inputValue, ...extraTerms.map((t) => t.value)]
         .map((t) => t.trim())
-        .filter(Boolean)
-        .join(" ");
-      if (!term) return;
+        .filter(Boolean);
+      if (!boxes.length) return;
+      const term = boxes.join(" ");
+      // AND-filter only when the user added 2+ keyword boxes.
+      const andTerms = boxes.length >= 2 ? boxes : [];
       setKeyword(term);
-      load(term, dateFrom, dateTo);
+      load(term, dateFrom, dateTo, andTerms);
 
       // Fire-and-forget: log the search with user identity
       logSearch({
@@ -485,7 +563,7 @@ function ScraperUI({ user }: { user: User }) {
         </div>
       )}
 
-      {hasSearched && !loading && visible.length > 0 && (
+      {hasSearched && visible.length > 0 && (
         <div className="stats-hero">
           <div className="stat-card">
             <span className="stat-label">
@@ -511,7 +589,9 @@ function ScraperUI({ user }: { user: User }) {
       {hasSearched && (
         <div className="meta-row">
           <span>
-            {loading ? "Fetching…" : `Sorted by ${sort === "likes" ? "engagement" : "date"}`}
+            {pending.length > 0
+              ? `Fetching ${pending.map((p) => (p === "twitter" ? "X" : "LinkedIn")).join(" & ")}…`
+              : `Sorted by ${sort === "likes" ? "engagement" : "date"}`}
           </span>
         </div>
       )}
@@ -519,6 +599,20 @@ function ScraperUI({ user }: { user: User }) {
       {!hasSearched ? (
         <div className="empty">
           Enter a keyword and hit <span className="kw">Search</span> to start scraping.
+        </div>
+      ) : visible.length > 0 ? (
+        // Show results the moment any platform returns; a slow source still
+        // loading appends a skeleton at the end instead of blocking the feed.
+        <div className="feed">
+          {visible.map((post) => (
+            <PostCard
+              key={post.url}
+              post={post}
+              keyword={keyword}
+              maxLikes={maxLikes}
+            />
+          ))}
+          {pending.length > 0 && <SkeletonCard />}
         </div>
       ) : loading ? (
         <div className="feed">
@@ -534,20 +628,9 @@ function ScraperUI({ user }: { user: User }) {
             Retry
           </button>
         </div>
-      ) : visible.length === 0 ? (
+      ) : (
         <div className="empty">
           No posts found for <span className="kw">{keyword}</span>.
-        </div>
-      ) : (
-        <div className="feed">
-          {visible.map((post) => (
-            <PostCard
-              key={post.url}
-              post={post}
-              keyword={keyword}
-              maxLikes={maxLikes}
-            />
-          ))}
         </div>
       )}
     </main>
