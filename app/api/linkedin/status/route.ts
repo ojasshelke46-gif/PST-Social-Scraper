@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildPosts, getRunStatus, fetchAllItems, actorError } from "@/app/lib/linkedin";
+import { isRelevantPost } from "@/lib/relevance-filter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -10,6 +11,8 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const runId = params.get("runId")?.trim() || "";
   const datasetId = params.get("datasetId")?.trim() || "";
+  // The searched phrase — used to drop fuzzy LinkedIn matches that never mention it.
+  const keyword = params.get("keyword")?.trim() || "";
   // Extra required terms (one per added keyword box). Only AND-filter when present.
   const andTerms = params.getAll("and").map((t) => t.trim()).filter(Boolean);
 
@@ -24,10 +27,21 @@ export async function GET(request: Request) {
     const done = status !== "RUNNING" && status !== "READY";
 
     const rawPosts = await fetchAllItems(token, datasetId);
-    const posts = buildPosts(rawPosts, andTerms);
+
+    // LinkedIn search is fuzzy (matches single words independently), so post-fetch
+    // we keep only items that genuinely mention the searched keyword. Empty keyword
+    // → skip filtering entirely (return everything as-is).
+    const relevantPosts = keyword
+      ? rawPosts.filter((p) =>
+          isRelevantPost(p.text ?? p.postText ?? p.content ?? "", keyword),
+        )
+      : rawPosts;
+
+    const posts = buildPosts(relevantPosts, andTerms);
 
     // Actor sometimes "succeeds" but emits a PROCESSING_ERROR marker instead of
-    // posts. Surface that (with a retry hint) so the client can re-run.
+    // posts. Check the original rawPosts (the error marker wouldn't survive the
+    // relevance filter). Surface it with a retry hint so the client can re-run.
     const actorErr = posts.length === 0 ? actorError(rawPosts) : null;
     const failed = done && actorErr !== null;
 
@@ -37,6 +51,11 @@ export async function GET(request: Request) {
       posts,
       failed,
       error: failed ? `LinkedIn scrape failed (${actorErr}). Retrying…` : undefined,
+      meta: {
+        total_fetched: rawPosts.length,
+        total_returned: posts.length,
+        filtered_out: rawPosts.length - posts.length,
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

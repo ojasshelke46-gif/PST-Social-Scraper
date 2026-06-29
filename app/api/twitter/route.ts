@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { Post } from "@/app/types";
+import { isRelevantPost } from "@/lib/relevance-filter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -130,18 +131,31 @@ export async function GET(request: Request) {
 
     console.log(`[twitterapi.io] pulled ${all.length} tweets across ${pages} page(s)`);
 
+    // Drop fuzzy matches that don't genuinely mention the searched keyword. Empty
+    // keyword → skip (return everything as-is).
+    const relevant = keyword ? all.filter((t) => isRelevantPost(t.text ?? "", keyword)) : all;
+
     // Only keep tweets containing every explicitly-added keyword (AND).
     const filtered =
       andTerms.length > 0
-        ? all.filter((t) => {
+        ? relevant.filter((t) => {
             const text = (t.text ?? "").toLowerCase();
             return andTerms.every((term) => text.includes(term.replace(/^#/, "").toLowerCase()));
           })
-        : all;
+        : relevant;
 
     const posts = filtered.slice(0, MAX_TWEETS).map(normalizeTweet);
 
-    return NextResponse.json({ platform: "twitter", keyword, posts });
+    return NextResponse.json({
+      platform: "twitter",
+      keyword,
+      posts,
+      meta: {
+        total_fetched: all.length,
+        total_returned: posts.length,
+        filtered_out: all.length - posts.length,
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error(`[twitterapi.io] search threw: ${message}`);
