@@ -8,8 +8,19 @@
 export function isRelevantPost(text: string, keyword: string): boolean {
   if (!text || !keyword) return false;
 
-  const normalizedText = text.toLowerCase();
-  const normalizedKeyword = keyword.toLowerCase().trim();
+  // Lowercase, treat hashtag/mention/joiner punctuation as spaces, collapse
+  // whitespace. Lets "#ThePolarisFellowship" / "@polaris_fellowship" satisfy the
+  // exact-phrase check. (The word check below already matched inside those via
+  // substring includes(), so this mainly hardens check 1.)
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[#@_\-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const normalizedText = normalize(text);
+  const normalizedKeyword = normalize(keyword);
 
   // Check 1: exact phrase match — strongest signal
   if (normalizedText.includes(normalizedKeyword)) return true;
@@ -17,7 +28,7 @@ export function isRelevantPost(text: string, keyword: string): boolean {
   // Check 2: all meaningful words present
   // Filter out short connector words (of, the, at, in, for, and, a)
   const meaningfulWords = normalizedKeyword
-    .split(/\s+/)
+    .split(" ")
     .filter((word) => word.length > 3);
 
   if (

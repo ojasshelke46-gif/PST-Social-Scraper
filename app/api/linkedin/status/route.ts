@@ -60,10 +60,14 @@ export async function GET(request: Request) {
         timestamp: new Date().toISOString(),
       });
     } else if (done) {
-      console.log(
-        `[apify] linkedin run ${runId} ${status} — keyword="${keyword}" ` +
-          `total_fetched=${rawPosts.length} total_after_filter=${posts.length}`,
-      );
+      // Per-stage counts so any silent drop is visible in the Vercel logs.
+      // Stage 3 == Stage 4 because buildPosts (normalization) never discards a
+      // relevant item — normalizePost always returns a Post.
+      console.log(`[Stage 1] Raw items from Apify: ${rawPosts.length}`);
+      console.log(`[Stage 2] After isRelevantPost filter: ${relevantPosts.length}`);
+      console.log(`[Stage 3] After normalization: ${posts.length}`);
+      console.log(`[Stage 4] Sent to frontend: ${posts.length}`);
+      console.log(`[apify] linkedin run ${runId} ${status} — keyword="${keyword}"`);
     }
 
     return NextResponse.json({
