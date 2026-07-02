@@ -221,6 +221,15 @@ function ScraperUI({ user }: { user: User }) {
     const setErr = (platform: string, msg: string) =>
       setPlatformErrors((prev) => ({ ...prev, [platform]: msg }));
 
+    // LinkedIn posts are unioned (deduped by URL) across every poll AND across an
+    // adaptive re-run, so a later low-yield poll/run can only ADD posts, never
+    // shrink what's already shown.
+    const linkedinSeen = new Map<string, Post>();
+    const mergeLinkedIn = (list: Post[]) => {
+      for (const p of list) linkedinSeen.set(p.url || JSON.stringify(p).slice(0, 80), p);
+      mergePosts("linkedin", Array.from(linkedinSeen.values()));
+    };
+
     // X/Twitter is fast — one request.
     const fetchTwitter = async () => {
       try {
@@ -236,46 +245,76 @@ function ScraperUI({ user }: { user: User }) {
       }
     };
 
-    // One LinkedIn run: start the Apify actor, poll until done. Returns "failed"
-    // when the actor emits a PROCESSING_ERROR (LinkedIn blocked the scrape).
-    const runLinkedInOnce = async (): Promise<"ok" | "failed" | "stop"> => {
+    // One LinkedIn run: start the Apify actor, poll until done. `outcome` is
+    // "failed" when the actor emits a PROCESSING_ERROR (LinkedIn blocked the
+    // scrape); `rawYield` is the actor's raw item count (before filtering) so the
+    // caller can decide whether the run came back suspiciously low.
+    const runLinkedInOnce = async (): Promise<{
+      outcome: "ok" | "failed" | "stop";
+      rawYield: number;
+    }> => {
       const sres = await fetch(`/api/linkedin/start?${qs}`, { cache: "no-store" });
       const s = (await sres.json()) as { runId?: string; datasetId?: string; error?: string };
-      if (stale()) return "stop";
+      if (stale()) return { outcome: "stop", rawYield: 0 };
       if (s.error || !s.runId || !s.datasetId) {
         setErr("linkedin", s.error || "Failed to start LinkedIn scrape");
-        return "failed";
+        return { outcome: "failed", rawYield: 0 };
       }
 
       const pollDeadline = Date.now() + 290_000;
       const statusQs = `${qs}&runId=${s.runId}&datasetId=${s.datasetId}`;
+      let rawYield = 0;
       while (Date.now() < pollDeadline) {
         await new Promise((r) => setTimeout(r, 3000));
-        if (stale()) return "stop";
+        if (stale()) return { outcome: "stop", rawYield };
         const pres = await fetch(`/api/linkedin/status?${statusQs}`, { cache: "no-store" });
         const p = (await pres.json()) as {
           done?: boolean;
           failed?: boolean;
           posts?: Post[];
           error?: string;
+          meta?: { total_fetched?: number };
         };
-        if (stale()) return "stop";
-        if (p.posts?.length) mergePosts("linkedin", p.posts);
-        if (p.failed) return "failed";
-        if (p.done) return "ok";
+        if (stale()) return { outcome: "stop", rawYield };
+        if (p.posts?.length) mergeLinkedIn(p.posts);
+        if (typeof p.meta?.total_fetched === "number") rawYield = p.meta.total_fetched;
+        if (p.failed) return { outcome: "failed", rawYield };
+        if (p.done) return { outcome: "ok", rawYield };
       }
-      return "ok";
+      return { outcome: "ok", rawYield };
     };
 
-    // LinkedIn is slow AND flaky — the actor sometimes returns PROCESSING_ERROR.
-    // Auto-retry up to 2 times before giving up, so a transient block self-heals.
+    // LinkedIn is slow AND flaky: the actor sometimes returns PROCESSING_ERROR,
+    // and even on success its raw yield swings wildly run-to-run (measured 1–485
+    // for the same query). Two safeguards:
+    //  1. On PROCESSING_ERROR → retry with backoff (transient block self-heals).
+    //  2. On a suspiciously low successful yield → run ONCE more and merge unique
+    //     results (deduped by URL). This is deliberately adaptive, not a fixed
+    //     3×: healthy runs (hundreds of posts) never pay for a second run, and a
+    //     low-yield run is cheap to re-run precisely because it returned few
+    //     posts. Testing showed a 3rd run adds ~0 unique, so we cap the merge
+    //     re-run at 1.
+    const LOW_YIELD_FLOOR = 100;
     const fetchLinkedIn = async () => {
       try {
+        let mergeRetriesUsed = 0;
         for (let attempt = 1; attempt <= 3; attempt++) {
-          const result = await runLinkedInOnce();
-          if (result === "stop") return;
-          if (result === "ok") return;
+          const { outcome, rawYield } = await runLinkedInOnce();
+          if (outcome === "stop") return;
           if (stale()) return;
+
+          if (outcome === "ok") {
+            if (rawYield < LOW_YIELD_FLOOR && mergeRetriesUsed < 1 && attempt < 3) {
+              mergeRetriesUsed++;
+              setErr("linkedin", "Low result count — running once more for completeness…");
+              await new Promise((r) => setTimeout(r, 3000));
+              continue;
+            }
+            if (!stale()) setErr("linkedin", "");
+            return;
+          }
+
+          // outcome === "failed"
           if (attempt < 3) {
             // Exponential backoff (2s, then 4s) — the failure is usually a
             // transient LinkedIn-side block, so don't hammer it back-to-back.
@@ -376,7 +415,7 @@ function ScraperUI({ user }: { user: User }) {
 
   const totalImpressions = totalLikes * IMPRESSIONS_PER_LIKE;
 
-  const errorEntries = Object.entries(platformErrors);
+  const errorEntries = Object.entries(platformErrors).filter(([, msg]) => msg);
 
   const handleExportCSV = useCallback(() => {
     setCsvExporting(true);
