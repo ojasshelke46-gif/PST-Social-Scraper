@@ -277,8 +277,11 @@ function ScraperUI({ user }: { user: User }) {
           if (result === "ok") return;
           if (stale()) return;
           if (attempt < 3) {
+            // Exponential backoff (2s, then 4s) — the failure is usually a
+            // transient LinkedIn-side block, so don't hammer it back-to-back.
+            const backoffMs = 2000 * 2 ** (attempt - 1);
             setErr("linkedin", `LinkedIn scrape failed — retrying (${attempt}/2)…`);
-            await new Promise((r) => setTimeout(r, 1500));
+            await new Promise((r) => setTimeout(r, backoffMs));
           } else {
             setErr("linkedin", "LinkedIn scrape failed after retries. Try again in a moment.");
           }

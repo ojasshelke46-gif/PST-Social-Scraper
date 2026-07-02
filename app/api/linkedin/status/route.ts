@@ -45,6 +45,27 @@ export async function GET(request: Request) {
     const actorErr = posts.length === 0 ? actorError(rawPosts) : null;
     const failed = done && actorErr !== null;
 
+    // Log the COMPLETE failure detail for every failed run — the runId lets you
+    // open the exact run in the Apify Console to see the real block reason
+    // (CAPTCHA / IP block / PROCESSING_ERROR). Counts confirm the relevance filter
+    // isn't silently eating results.
+    if (failed) {
+      console.error("LinkedIn scrape failure:", {
+        runId,
+        status,
+        actorError: actorErr,
+        total_fetched: rawPosts.length,
+        total_after_filter: posts.length,
+        keyword,
+        timestamp: new Date().toISOString(),
+      });
+    } else if (done) {
+      console.log(
+        `[apify] linkedin run ${runId} ${status} — keyword="${keyword}" ` +
+          `total_fetched=${rawPosts.length} total_after_filter=${posts.length}`,
+      );
+    }
+
     return NextResponse.json({
       status,
       done,
